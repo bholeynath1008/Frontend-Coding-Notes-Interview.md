@@ -1,0 +1,960 @@
+# React Project Architecture & Build Tools
+
+## Table of Contents
+
+1. [Path Aliases in Vite/tsconfig](#1-path-aliases-in-vitetsconfig)
+2. [Feature-Based vs Type-Based Architecture](#2-feature-based-vs-type-based-architecture)
+3. [Monorepo (Nx/Turborepo) for React Apps](#3-monorepo-nxturborepo-for-react-apps)
+4. [Micro Frontends](#4-micro-frontends)
+5. [Atomic Design Methodology](#5-atomic-design-methodology)
+6. [Vite vs Webpack](#6-vite-vs-webpack)
+   - 6.1. How it Works (General Steps)
+   - 6.2. Popular Bundlers
+
+---
+
+## 1. Path Aliases in Vite/tsconfig
+
+Path aliases allow you to import modules using custom shortcuts instead of relative paths, making code cleaner and more maintainable.
+
+### Why Use Path Aliases?
+
+**Problems with Relative Paths:**
+```javascript
+// ❌ Hard to read and maintain
+import Button from '../../../components/ui/Button';
+import { useAuth } from '../../../../hooks/useAuth';
+import { API_URL } from '../../../config/constants';
+```
+
+**Benefits with Aliases:**
+```javascript
+// ✅ Clean and maintainable
+import Button from '@/components/ui/Button';
+import { useAuth } from '@/hooks/useAuth';
+import { API_URL } from '@/config/constants';
+```
+
+### Setup in Vite
+
+**1. Configure vite.config.ts:**
+```javascript
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import path from 'path';
+
+export default defineConfig({
+  plugins: [react()],
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, './src'),
+      '@components': path.resolve(__dirname, './src/components'),
+      '@hooks': path.resolve(__dirname, './src/hooks'),
+      '@utils': path.resolve(__dirname, './src/utils'),
+      '@types': path.resolve(__dirname, './src/types'),
+      '@api': path.resolve(__dirname, './src/api'),
+      '@assets': path.resolve(__dirname, './src/assets'),
+    },
+  },
+});
+```
+
+**2. Configure tsconfig.json (for TypeScript):**
+```json
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"],
+      "@components/*": ["./src/components/*"],
+      "@hooks/*": ["./src/hooks/*"],
+      "@utils/*": ["./src/utils/*"],
+      "@types/*": ["./src/types/*"],
+      "@api/*": ["./src/api/*"],
+      "@assets/*": ["./src/assets/*"]
+    }
+  }
+}
+```
+
+**3. Configure jsconfig.json (for JavaScript):**
+```json
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"],
+      "@components/*": ["./src/components/*"],
+      "@hooks/*": ["./src/hooks/*"]
+    }
+  },
+  "exclude": ["node_modules", "dist"]
+}
+```
+
+### Usage Examples
+
+```javascript
+// Old way
+import Header from '../../../components/layout/Header';
+import Sidebar from '../../../components/layout/Sidebar';
+import { formatDate } from '../../../utils/dateUtils';
+import { User } from '../../../types/user';
+
+// With aliases
+import Header from '@components/layout/Header';
+import Sidebar from '@components/layout/Sidebar';
+import { formatDate } from '@utils/dateUtils';
+import { User } from '@types/user';
+```
+
+### Common Alias Patterns
+
+```javascript
+{
+  '@': './src',                    // Root alias
+  '@components': './src/components',
+  '@pages': './src/pages',
+  '@hooks': './src/hooks',
+  '@contexts': './src/contexts',
+  '@utils': './src/utils',
+  '@lib': './src/lib',
+  '@api': './src/api',
+  '@services': './src/services',
+  '@store': './src/store',
+  '@types': './src/types',
+  '@assets': './src/assets',
+  '@styles': './src/styles',
+  '@config': './src/config',
+  '@constants': './src/constants',
+}
+```
+
+## 2. Feature-Based vs Type-Based Architecture
+
+### Type-Based Architecture (Traditional)
+
+Organizes code by technical type (components, hooks, utils, etc.)
+
+**Structure:**
+```
+src/
+├── components/
+│   ├── UserProfile.jsx
+│   ├── UserList.jsx
+│   ├── ProductCard.jsx
+│   └── ProductList.jsx
+├── hooks/
+│   ├── useUser.js
+│   └── useProducts.js
+├── services/
+│   ├── userService.js
+│   └── productService.js
+├── utils/
+│   ├── userUtils.js
+│   └── productUtils.js
+└── types/
+    ├── user.ts
+    └── product.ts
+```
+
+**Pros:**
+- Simple and familiar
+- Easy to find code by type
+- Good for small projects
+
+**Cons:**
+- Scattered related code
+- Hard to find feature-specific code
+- Difficult to isolate features
+- Scaling issues in large apps
+
+### Feature-Based Architecture (Modern/Recommended)
+
+Organizes code by business feature or domain
+
+**Structure:**
+```
+src/
+├── features/
+│   ├── user/
+│   │   ├── components/
+│   │   │   ├── UserProfile.jsx
+│   │   │   └── UserList.jsx
+│   │   ├── hooks/
+│   │   │   └── useUser.js
+│   │   ├── services/
+│   │   │   └── userService.js
+│   │   ├── types/
+│   │   │   └── user.ts
+│   │   ├── utils/
+│   │   │   └── userUtils.js
+│   │   └── index.ts
+│   └── product/
+│       ├── components/
+│       │   ├── ProductCard.jsx
+│       │   └── ProductList.jsx
+│       ├── hooks/
+│       │   └── useProducts.js
+│       ├── services/
+│       │   └── productService.js
+│       └── index.ts
+├── shared/
+│   ├── components/
+│   ├── hooks/
+│   └── utils/
+└── app/
+    ├── routes/
+    └── store/
+```
+
+**Pros:**
+- All related code together
+- Easy to understand feature boundaries
+- Better code ownership
+- Easier to test and maintain
+- Can extract features to packages
+- Supports micro frontends
+
+**Cons:**
+- Initial setup complexity
+- May duplicate code if not using shared folder properly
+
+### Hybrid Approach (Best for Most Apps)
+
+**Structure:**
+```
+src/
+├── features/
+│   ├── auth/
+│   │   ├── components/
+│   │   ├── hooks/
+│   │   ├── api/
+│   │   └── index.ts
+│   ├── dashboard/
+│   └── profile/
+├── shared/
+│   ├── components/
+│   │   ├── ui/          # Button, Input, Modal
+│   │   └── layout/      # Header, Sidebar
+│   ├── hooks/
+│   ├── utils/
+│   └── types/
+├── lib/                 # Third-party lib wrappers
+│   ├── axios/
+│   └── react-query/
+├── config/
+└── app/
+    ├── routes/
+    ├── store/
+    └── App.tsx
+```
+
+**Example Feature Module:**
+```javascript
+// features/auth/index.ts
+export { LoginForm } from './components/LoginForm';
+export { RegisterForm } from './components/RegisterForm';
+export { useAuth } from './hooks/useAuth';
+export { authService } from './api/authService';
+export type { User, AuthState } from './types';
+```
+
+## 3. Monorepo (Nx/Turborepo) for React Apps
+
+A monorepo is a single repository containing multiple related projects (apps, libraries, packages).
+
+### Why Use Monorepos?
+
+**Benefits:**
+- Share code between projects
+- Consistent tooling and dependencies
+- Atomic commits across projects
+- Easier refactoring
+- Better code reuse
+- Single source of truth
+
+**Use Cases:**
+- Multiple apps sharing UI components
+- Web + mobile apps
+- Admin dashboard + customer portal
+- Microservices frontend
+
+### Nx Monorepo
+
+**Structure:**
+```
+my-workspace/
+├── apps/
+│   ├── web/                # Main web app
+│   ├── admin/              # Admin dashboard
+│   └── mobile/             # React Native app
+├── libs/
+│   ├── ui/                 # Shared UI components
+│   │   ├── src/
+│   │   └── package.json
+│   ├── data-access/        # API clients
+│   └── utils/              # Utility functions
+├── tools/
+├── nx.json
+├── package.json
+└── tsconfig.base.json
+```
+
+**Setup:**
+```bash
+# Create Nx workspace
+npx create-nx-workspace@latest my-workspace
+
+# Generate React app
+nx g @nx/react:app web
+
+# Generate library
+nx g @nx/react:lib ui
+
+# Run app
+nx serve web
+
+# Build app
+nx build web
+
+# Run affected tests (only changed code)
+nx affected:test
+```
+
+**nx.json:**
+```json
+{
+  "tasksRunnerOptions": {
+    "default": {
+      "runner": "nx/tasks-runners/default",
+      "options": {
+        "cacheableOperations": ["build", "test", "lint"]
+      }
+    }
+  }
+}
+```
+
+### Turborepo
+
+**Structure:**
+```
+my-monorepo/
+├── apps/
+│   ├── web/
+│   │   ├── package.json
+│   │   └── src/
+│   └── docs/
+│       ├── package.json
+│       └── src/
+├── packages/
+│   ├── ui/
+│   │   ├── package.json
+│   │   └── src/
+│   ├── eslint-config/
+│   └── tsconfig/
+├── turbo.json
+└── package.json
+```
+
+**Setup:**
+```bash
+# Create Turborepo
+npx create-turbo@latest
+
+# Install dependencies
+npm install
+
+# Run all apps
+npm run dev
+
+# Build all packages
+npm run build
+```
+
+**turbo.json:**
+```json
+{
+  "$schema": "https://turbo.build/schema.json",
+  "pipeline": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", ".next/**"]
+    },
+    "test": {
+      "dependsOn": ["build"],
+      "outputs": []
+    },
+    "lint": {
+      "outputs": []
+    },
+    "dev": {
+      "cache": false
+    }
+  }
+}
+```
+
+**Sharing Code:**
+```javascript
+// packages/ui/Button.tsx
+export const Button = ({ children, ...props }) => (
+  <button {...props}>{children}</button>
+);
+
+// apps/web/src/App.tsx
+import { Button } from '@myorg/ui';
+
+function App() {
+  return <Button>Click me</Button>;
+}
+```
+
+### Comparison: Nx vs Turborepo
+
+| Feature | Nx | Turborepo |
+|---------|-----|-----------|
+| **Learning Curve** | Steeper | Gentler |
+| **Features** | More built-in | Minimal, focused |
+| **Generators** | Yes (code generation) | No |
+| **Dependency Graph** | Visual graph | Basic |
+| **Cache** | Local + remote | Local + remote |
+| **Cloud** | Nx Cloud | Vercel |
+| **Best For** | Complex monorepos | Simple to medium |
+
+## 4. Micro Frontends
+
+Micro frontends extend microservices concept to frontend, splitting UI into smaller, independent apps.
+
+### Architecture Patterns
+
+#### 1. Build-Time Integration (NPM Packages)
+
+**Structure:**
+```
+packages/
+├── shell/              # Host app
+├── header/             # Published as @myapp/header
+├── products/           # Published as @myapp/products
+└── checkout/           # Published as @myapp/checkout
+```
+
+**Usage:**
+```javascript
+// shell/src/App.tsx
+import { Header } from '@myapp/header';
+import { Products } from '@myapp/products';
+import { Checkout } from '@myapp/checkout';
+
+function App() {
+  return (
+    <>
+      <Header />
+      <Products />
+      <Checkout />
+    </>
+  );
+}
+```
+
+**Pros:** Simple, type-safe
+**Cons:** Requires rebuild to update, tight coupling
+
+#### 2. Run-Time Integration (Module Federation)
+
+**Webpack Module Federation:**
+```javascript
+// products/webpack.config.js
+module.exports = {
+  plugins: [
+    new ModuleFederationPlugin({
+      name: 'products',
+      filename: 'remoteEntry.js',
+      exposes: {
+        './ProductList': './src/ProductList',
+      },
+      shared: {
+        react: { singleton: true },
+        'react-dom': { singleton: true },
+      },
+    }),
+  ],
+};
+
+// shell/webpack.config.js
+module.exports = {
+  plugins: [
+    new ModuleFederationPlugin({
+      name: 'shell',
+      remotes: {
+        products: 'products@http://localhost:3001/remoteEntry.js',
+        checkout: 'checkout@http://localhost:3002/remoteEntry.js',
+      },
+      shared: {
+        react: { singleton: true },
+        'react-dom': { singleton: true },
+      },
+    }),
+  ],
+};
+```
+
+**Usage:**
+```javascript
+// shell/src/App.tsx
+import React, { lazy, Suspense } from 'react';
+
+const ProductList = lazy(() => import('products/ProductList'));
+const Checkout = lazy(() => import('checkout/CheckoutPage'));
+
+function App() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <ProductList />
+      <Checkout />
+    </Suspense>
+  );
+}
+```
+
+**Pros:** Independent deployment, true separation
+**Cons:** Complex setup, runtime overhead
+
+#### 3. iframe Integration
+
+```javascript
+function MicroFrontend({ url }) {
+  return (
+    <iframe
+      src={url}
+      style={{ width: '100%', height: '600px', border: 'none' }}
+    />
+  );
+}
+
+// Usage
+<MicroFrontend url="https://products.myapp.com" />
+```
+
+**Pros:** Complete isolation
+**Cons:** Communication overhead, SEO issues, performance
+
+### Communication Between Micro Frontends
+
+**1. Custom Events:**
+```javascript
+// Publish
+window.dispatchEvent(new CustomEvent('cart:updated', {
+  detail: { itemCount: 5 }
+}));
+
+// Subscribe
+window.addEventListener('cart:updated', (e) => {
+  console.log('Cart updated:', e.detail);
+});
+```
+
+**2. Shared State (Context/Store):**
+```javascript
+// Shared store
+export const sharedStore = {
+  user: null,
+  cart: [],
+  listeners: [],
+  
+  subscribe(callback) {
+    this.listeners.push(callback);
+  },
+  
+  updateCart(cart) {
+    this.cart = cart;
+    this.listeners.forEach(cb => cb(this.cart));
+  },
+};
+```
+
+## 5. Atomic Design Methodology
+
+Atomic Design is a methodology for creating design systems with five distinct levels.
+
+### The Five Levels
+
+**1. Atoms** - Basic building blocks
+```javascript
+// atoms/Button.tsx
+export const Button = ({ children, variant = 'primary', ...props }) => (
+  <button className={`btn btn-${variant}`} {...props}>
+    {children}
+  </button>
+);
+
+// atoms/Input.tsx
+export const Input = ({ label, ...props }) => (
+  <div>
+    <label>{label}</label>
+    <input {...props} />
+  </div>
+);
+
+// atoms/Icon.tsx
+export const Icon = ({ name, size = 24 }) => (
+  <svg width={size} height={size}>...</svg>
+);
+```
+
+**2. Molecules** - Simple component groups
+```javascript
+// molecules/SearchBox.tsx
+import { Input } from '@/atoms/Input';
+import { Button } from '@/atoms/Button';
+import { Icon } from '@/atoms/Icon';
+
+export const SearchBox = ({ onSearch }) => {
+  const [query, setQuery] = useState('');
+  
+  return (
+    <div className="search-box">
+      <Input
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Search..."
+      />
+      <Button onClick={() => onSearch(query)}>
+        <Icon name="search" />
+      </Button>
+    </div>
+  );
+};
+```
+
+**3. Organisms** - Complex UI components
+```javascript
+// organisms/Header.tsx
+import { Logo } from '@/atoms/Logo';
+import { SearchBox } from '@/molecules/SearchBox';
+import { Navigation } from '@/molecules/Navigation';
+import { UserMenu } from '@/molecules/UserMenu';
+
+export const Header = () => (
+  <header className="header">
+    <Logo />
+    <SearchBox onSearch={handleSearch} />
+    <Navigation items={navItems} />
+    <UserMenu user={currentUser} />
+  </header>
+);
+```
+
+**4. Templates** - Page layouts
+```javascript
+// templates/DashboardTemplate.tsx
+import { Header } from '@/organisms/Header';
+import { Sidebar } from '@/organisms/Sidebar';
+import { Footer } from '@/organisms/Footer';
+
+export const DashboardTemplate = ({ children }) => (
+  <div className="dashboard-layout">
+    <Header />
+    <div className="dashboard-content">
+      <Sidebar />
+      <main>{children}</main>
+    </div>
+    <Footer />
+  </div>
+);
+```
+
+**5. Pages** - Specific instances
+```javascript
+// pages/Dashboard.tsx
+import { DashboardTemplate } from '@/templates/DashboardTemplate';
+import { StatsCards } from '@/organisms/StatsCards';
+import { RecentActivity } from '@/organisms/RecentActivity';
+
+export const Dashboard = () => {
+  const stats = useStats();
+  const activity = useRecentActivity();
+  
+  return (
+    <DashboardTemplate>
+      <StatsCards data={stats} />
+      <RecentActivity data={activity} />
+    </DashboardTemplate>
+  );
+};
+```
+
+### Project Structure
+
+```
+src/
+├── components/
+│   ├── atoms/
+│   │   ├── Button/
+│   │   ├── Input/
+│   │   ├── Icon/
+│   │   └── Typography/
+│   ├── molecules/
+│   │   ├── SearchBox/
+│   │   ├── Card/
+│   │   └── FormField/
+│   ├── organisms/
+│   │   ├── Header/
+│   │   ├── Sidebar/
+│   │   └── ProductList/
+│   └── templates/
+│       ├── DashboardTemplate/
+│       └── AuthTemplate/
+├── pages/
+│   ├── Dashboard/
+│   ├── Products/
+│   └── Login/
+└── styles/
+    └── tokens.css
+```
+
+**Design Tokens:**
+```css
+/* styles/tokens.css */
+:root {
+  /* Colors */
+  --color-primary: #007bff;
+  --color-secondary: #6c757d;
+  --color-success: #28a745;
+  
+  /* Spacing */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  
+  /* Typography */
+  --font-size-sm: 12px;
+  --font-size-md: 16px;
+  --font-size-lg: 24px;
+}
+```
+
+## 6. Vite vs Webpack
+
+### Quick Comparison
+
+| Feature | Vite | Webpack |
+|---------|------|---------|
+| **Dev Server** | Instant (ESM) | Slower (bundling) |
+| **HMR** | Instant | Fast but slower |
+| **Build Speed** | Very fast (esbuild) | Slower |
+| **Config** | Simpler | More complex |
+| **Ecosystem** | Growing | Mature |
+| **Learning Curve** | Gentle | Steep |
+| **Best For** | Modern apps | Complex configs |
+
+### 6.1. How it Works (General Steps)
+
+#### Webpack Workflow
+
+**Development:**
+```
+Source Code
+    ↓
+Entry Point (index.js)
+    ↓
+Dependency Graph
+    ↓
+Loaders (babel, css, etc.)
+    ↓
+Bundle Everything
+    ↓
+Dev Server
+```
+
+**Production:**
+```
+Source Code
+    ↓
+Entry Points
+    ↓
+Loaders & Plugins
+    ↓
+Code Splitting
+    ↓
+Minification/Optimization
+    ↓
+Output Bundle(s)
+```
+
+**webpack.config.js:**
+```javascript
+const path = require('path');
+const HtmlWebpackPlugin = require('html-webpack-plugin');
+
+module.exports = {
+  entry: './src/index.tsx',
+  output: {
+    path: path.resolve(__dirname, 'dist'),
+    filename: '[name].[contenthash].js',
+  },
+  module: {
+    rules: [
+      {
+        test: /\.tsx?$/,
+        use: 'ts-loader',
+        exclude: /node_modules/,
+      },
+      {
+        test: /\.css$/,
+        use: ['style-loader', 'css-loader'],
+      },
+      {
+        test: /\.(png|svg|jpg|jpeg|gif)$/i,
+        type: 'asset/resource',
+      },
+    ],
+  },
+  plugins: [
+    new HtmlWebpackPlugin({
+      template: './public/index.html',
+    }),
+  ],
+  optimization: {
+    splitChunks: {
+      chunks: 'all',
+    },
+  },
+  devServer: {
+    port: 3000,
+    hot: true,
+  },
+};
+```
+
+#### Vite Workflow
+
+**Development (No Bundling!):**
+```
+Source Code
+    ↓
+ESM Imports (Native)
+    ↓
+Dev Server (esbuild for deps)
+    ↓
+Browser (loads modules directly)
+```
+
+**Production:**
+```
+Source Code
+    ↓
+Rollup Bundling
+    ↓
+Optimization
+    ↓
+Output Bundle(s)
+```
+
+**vite.config.ts:**
+```javascript
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    port: 3000,
+    open: true,
+  },
+  build: {
+    outDir: 'dist',
+    sourcemap: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom'],
+        },
+      },
+    },
+  },
+});
+```
+
+### Key Differences
+
+**Vite Advantages:**
+- **Instant dev server:** No bundling in dev, uses native ESM
+- **Lightning-fast HMR:** Updates in milliseconds
+- **Simple config:** Less boilerplate
+- **Out-of-box features:** TypeScript, JSX, CSS modules
+
+**Webpack Advantages:**
+- **Mature ecosystem:** More plugins and loaders
+- **Fine-grained control:** Highly configurable
+- **Better for complex builds:** Advanced code splitting
+- **Wider browser support:** Better legacy support
+
+### 6.2. Popular Bundlers
+
+**1. Webpack**
+- Most popular and mature
+- Highly configurable
+- Large ecosystem
+- Slower dev server
+
+**2. Vite**
+- Modern and fast
+- Great DX (developer experience)
+- Simple configuration
+- Built on Rollup
+
+**3. Parcel**
+- Zero config
+- Automatic optimization
+- Good for simple projects
+- Less control
+
+**4. esbuild**
+- Extremely fast (written in Go)
+- Used by Vite for dependencies
+- Limited features vs Webpack
+- Great for building libraries
+
+**5. Rollup**
+- Best for libraries
+- Tree-shaking champion
+- Used by Vite for production
+- Smaller bundles
+
+**6. Turbopack** (Next.js 13+)
+- Next-gen bundler by Vercel
+- Written in Rust
+- Successor to Webpack
+- Integrated with Next.js
+
+**Migration Example: Webpack → Vite**
+
+```bash
+# 1. Install Vite
+npm install -D vite @vitejs/plugin-react
+
+# 2. Update package.json
+{
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  }
+}
+
+# 3. Move index.html to root
+# 4. Update imports (if needed)
+# 5. Create vite.config.ts
+# 6. Remove webpack config and loaders
+```
+
+**When to Use Each:**
+
+- **Vite:** New projects, modern apps, fast iteration
+- **Webpack:** Complex builds, legacy support, specific loaders
+- **Parcel:** Quick prototypes, simple projects
+- **esbuild:** Library development, ultra-fast builds
+- **Rollup:** npm packages, tree-shaking critical
