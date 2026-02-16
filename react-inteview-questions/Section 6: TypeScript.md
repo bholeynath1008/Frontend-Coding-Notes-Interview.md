@@ -25,9 +25,6 @@ Expected Answer: Type React components, hooks, props, and events properly. Hints
 
 # TypeScript Interview Guide
 
-## Complete Reference: Core Concepts & Advanced Patterns
-# TypeScript Interview Questions
-
 ## Complete Table of Contents
 
 ### Section 1: Primitive Types
