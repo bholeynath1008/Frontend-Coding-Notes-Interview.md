@@ -1,0 +1,171 @@
+# Section 10: Testing
+
+## 111. React Testing and Its Importance
+Testing in React is the process of verifying your components, functions, and application as a whole work as expected. 
+* This ensures code quality, helps prevent bugs, and provides a safety net for future updates and refactoring, giving developers confidence in their code. 
+Unit tests: Pure functions, reducers, and utilities are tested in isolation using Jest.
+Component tests: React Testing Library is used to render components and simulate user interactions via user-event.
+Integration tests: Combine multiple components and services; RTL together with MSW (Mock Service Worker) intercepts network requests to test realistic workflows.
+End-to-end tests: Full user journeys are automated with Playwright (or Cypress). These tests run against a production-like environment and validate critical paths across the entire application stack.
+CI: All test suites are executed on every pull request; coverage thresholds are enforced, and e2e tests are triggered in a separate job to keep feedback fast.
+Linting + Prettier: Enforced before testing, ensuring all test code follows consistent formatting and best practices.
+
+## 115. Test Asynchronous Code in React
+Expected Answer: Use async/await, waitFor, findBy queries, mock timers. 
+•	waitFor waits for assertions to pass
+•	findBy* queries wait for elements
+•	Mock API calls with MSW or jest.mock
+•	Handle loading states, errors
+
+## 116. Snapshot Testing in React
+Expected Answer: Capture component output, compare against saved snapshot. 
+•	Jest creates .snap file with rendered output
+•	Fails when output changes unexpectedly
+•	Update snapshots with --updateSnapshot
+•	Use for: Stable components, regression prevention
+
+## 117. What to Test in React Component
+Expected Answer: Rendering, props, user interactions, state changes, edge cases.
+•	Render tests: Ensure that components render correctly without crashing.
+•	Props handling: Test if components properly render with props.
+•	User interactions: Test user actions like click, input change, event handlers working properly.
+•	API Calls: Ensure API calls work correctly without failing, and behavior when data is empty, undefined, error.
+•	Conditional Component rendering like in some edge cases like prop is false/true.
+•	Component Integration: Testing parent child communication. The primary goal is to ensure data flows correctly between components and that they react as expected to each other's state changes or triggered events.
+
+## 118. Component Integration Testing Steps
+Expected Answer: Test multiple components working together, user flows. 
+•	Render parent with children
+•	Simulate user journey
+•	Verify component interactions
+•	Test data flow between components
+
+## 119. Steps of Testing using RTL
+Expected Answer: Arrange (setup), Act (interact), Assert (verify), Cleanup. 
+•	Arrange: Render component, setup mocks
+•	Act: Simulate user events
+•	Assert: Check expected outcomes
+•	Cleanup: Unmount, reset mocks
+Details:
+Define test block using test or it method which will take two arguments first description message, second callback function. 
+Callback function will test logic:
+1.	Render the component.
+2.	Query the DOM using Screen
+3.	Make assertions using expects.
+Details:
+1.	Import necessary tools Import render and screen from @testing-library/react, component, assertion libraries like @testing-library/jest-dom.
+2.	Define the test block: Wrap logic in a test('description', () => { … }) or it(…). It/test will take two arguments first description message and second callback function.
+3.	Render the component Use the render() function to create a virtual version of your component in the testing environment.
+4.	Locate the element (Querying) Use screen methods to find the element you want to test.
+•	Priority 1: getByRole (e.g., button, heading).
+•	Priority 2: getByLabelText (for inputs).
+•	Priority 3: getByText (for paragraphs or spans).
+5.	Simulate user interaction (Optional) If the test requires a click or typing, use await userEvent.click(element) or await userEvent.type(element, 'text').
+6.	Make the assertion Use expect(element)… to verify the state. Common assertions include: toBeInTheDocument(), toBeVisible(), toHaveValue('some text')
+7.	Handle Asynchronous updates (Optional) If you are waiting for an API call or a timer, swap getBy for await screen.findByText(…)
+
+## 120. Queries in React Testing Library
+Expected Answer: Methods to find elements: getBy, findBy, queryBy, getAllBy, etc. Hints:
+•	getBy*: Throws if not found (use for required elements)
+•	queryBy*: Returns null if not found (use for conditional)
+•	findBy*: Returns promise, waits for element
+•	Prioritize user-facing queries (text, role, label)
+•	Asynchronous queries (findBy…, FindByText, FindByRole, FindByTestId), waitFor(): wait for condition to meet, to appear in DOM. Use await with async queries.
+
+## 121. Mock Function in Jest
+Expected Answer: jest.fn() creates mock function tracking calls, arguments, returns. **Hints:`
+•	jest.fn() mock with no implementation
+•	jest.fn().mockReturnValue() mock with return value
+•	jest.fn().mockImplementation() custom implementation
+•	mock.calls, mock.results for assertions
+
+## 122. Simulate Interactions
+Expected Answer: Use fireEvent or userEvent to simulate user interactions. Hints:
+•	fireEvent.click(button)
+•	userEvent.type(input, 'text') (more realistic)
+•	userEvent simulates full interaction sequence
+•	Test keyboard, mouse, touch events
+
+## 123. Test Lifecycle Hooks
+Expected Answer: Test useEffect behavior with different props, cleanup. Hints:
+•	Test effect runs on mount
+•	Test effect runs when dependencies change
+•	Test cleanup function
+•	Use act() wrapper for state updates
+
+## 124. Test Component that uses useState
+Expected Answer: Render component, interact, verify state updates. Hints:
+•	Render the component and see Initial state renders
+•	Find the interactive element (button) and the display element (text).
+•	Fire an event (click) to trigger the useState setter. User interaction updates state
+•	Assert that the DOM updated correctly.
+```javascript
+// Counter.test.js
+import { render, screen, fireEvent } from '@testing-library/react';
+import Counter from './Counter';
+
+test('increments count when button is clicked', () => {
+  render(<Counter />);
+  const button = screen.getByText('Increment');
+  const display = screen.getByTestId('count-val');
+  // Initial state check
+  expect(display).toHaveTextContent('0');
+  // Trigger state change
+  fireEvent.click(button);
+  // Assert state updated in the UI
+  expect(display).toHaveTextContent('1');
+});
+```
+
+## 125. Testing Initial Load (API Calls)
+Expected Answer: Mock API, test loading state, success state, error state. Hints:
+•	Mock fetch/axios with jest.mock
+•	Test loading indicator shows
+•	Test data renders on success
+•	Test error message on failure
+•	Use MSW for more realistic API mocking
+When useEffect fetches data on mount, use asynchronous queries like findBy to wait for the UI to update.
+Tips: Mock your APIs data.
+```javascript
+// Component: Fetches a username on mount
+useEffect(() => {
+  fetchUser().then(data => setName(data.name));
+}, []);
+
+// Test
+test('loads and displays name', async () => {
+  render(<UserComponent />);
+  // findBy queries wait for the element to appear (up to 1000ms by default, increase the findBy Timeout { timeout: 4000 })
+  const nameElement = await screen.findByText(/john doe/i);
+  expect(nameElement).toBeInTheDocument();
+});
+```
+
+## 126. Testing Dependencies
+Expected Answer: Mock external dependencies (API, localStorage, context). Hints:
+•	jest.mock('./api') for module mocking
+•	Mock context values with custom providers
+•	Mock browser APIs (localStorage, window)
+•	Keep tests isolated, deterministic
+
+## 127. Why Use Mock Props?
+Expected Answer: Test component with specific prop values, edge cases. Hints:
+•	Test component behavior with different props
+•	Simulate edge cases (empty data, errors)
+•	Isolate component from parent logic
+•	Make tests more predictable
+
+## 128. Why Testing with Mock Data?
+Mock props in RTL is a common practice, to isolate and test components efficiently.
+1.	Isolate component testing: to make sure its behavior is not influenced by it parent component or external dependency.
+2.	Control over Component behavior testing: By passing mock props we can test different scenarios like empty data, loading states or error conditions.
+3.	Faster test Execution: Mock props eliminate the need of fetch or generate real data, which can slow down tests.
+4.	Avoiding side effects: When testing avoid side effects from external dependencies.
+5.	Easy to debug if test case fails.
+
+## 129. Jest + RTL vs Vitest + RTL
+Expected Answer: Vitest is faster, compatible with Vite; Jest is mature, more features. Hints:
+•	Vitest: Faster, Vite integration, ES modules
+•	Jest: More mature, larger ecosystem, snapshot testing
+•	Similar API, easy migration
+•	Choose based on build tool preference
