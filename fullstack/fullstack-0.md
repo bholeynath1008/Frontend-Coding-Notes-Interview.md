@@ -1,4 +1,4 @@
-# 🏦 First Horizon Bank — Senior Full Stack Engineer
+# 🏦  Senior Full Stack Engineer
 ## Complete Interview Q&A Guide · Project Aurora
 
 > **How to use this guide:** Every question includes a structured answer approach, code examples where relevant, and a ⚡ Pro Tip showing what separates a senior answer from a mid-level one. All answers are tied to your actual resume experience.
