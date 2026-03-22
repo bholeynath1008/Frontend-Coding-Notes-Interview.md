@@ -1,0 +1,328 @@
+# E-Commerce Order Placement: Distributed Transaction Handling
+
+## High-Level Architecture Diagram
+
+```
+┌─────────────┐
+│   User      │
+│ Click Place │
+│   Order     │
+└──────┬──────┘
+       ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    ORDER SERVICE (Orchestrator)                  │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │              Saga Coordinator Engine                       │  │
+│  │  • Manages step sequence                                   │  │
+│  │  • Tracks completed steps                                  │  │
+│  │  • Handles retries & rollback                              │  │
+│  │  • Persists state to DB                                    │  │
+│  └───────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+                                    │
+        ┌───────────────────────────┼───────────────────────────┐
+        ▼                           ▼                           ▼
+┌───────────────┐         ┌───────────────┐         ┌───────────────┐
+│  INVENTORY    │         │   PAYMENT     │         │   SHIPPING    │
+│   Service     │         │   Service     │         │   Service     │
+├───────────────┤         ├───────────────┤         ├───────────────┤
+│ • Reserve     │         │ • Authorize   │         │ • Create      │
+│   Stock       │         │   Payment     │         │   Shipment    │
+│ • Release     │         │ • Capture     │         │ • Cancel      │
+│   Stock       │         │ • Refund      │         │   Shipment    │
+└───────────────┘         └───────────────┘         └───────────────┘
+                                    │
+                                    ▼
+                         ┌───────────────────┐
+                         │  DEAD LETTER QUEUE │
+                         │  (Failed Compensations) │
+                         └───────────────────┘
+```
+
+---
+
+## Step-by-Step Transaction Flow
+
+### **Normal Flow (Success)**
+
+| Step | Action | Service | Compensation (if fails later) |
+|------|--------|---------|-------------------------------|
+| **1** | Validate Order | Order Service | None (no side effects yet) |
+| **2** | Reserve Inventory | Inventory Service | Release reserved stock |
+| **3** | Authorize Payment | Payment Service | Void authorization (no charge) |
+| **4** | Create Shipment | Shipping Service | Cancel shipment |
+| **5** | Capture Payment | Payment Service | Refund payment |
+| **6** | Update Order Status | Order Service | Revert status |
+| **7** | Send Confirmation | Notification Service | No compensation needed |
+
+---
+
+### **Failure Scenarios & Handling**
+
+#### **Scenario A: Payment Authorization Fails (Step 3)**
+
+```
+Step 1: Validate Order     ✅ COMPLETED
+Step 2: Reserve Inventory  ✅ COMPLETED
+Step 3: Authorize Payment  ❌ FAILED (insufficient funds)
+
+ROLLBACK (LIFO Order):
+├── Step 2 Compensate: Release Inventory ✅
+└── Step 1 Compensate: Nothing to undo
+
+RESULT: Order fails, inventory restored, user not charged.
+```
+
+#### **Scenario B: Shipment Creation Fails (Step 4)**
+
+```
+Step 1: Validate Order     ✅ COMPLETED
+Step 2: Reserve Inventory  ✅ COMPLETED
+Step 3: Authorize Payment  ✅ COMPLETED
+Step 4: Create Shipment    ❌ FAILED (carrier API down)
+
+ROLLBACK (LIFO Order):
+├── Step 3 Compensate: Void Authorization ✅
+├── Step 2 Compensate: Release Inventory ✅
+└── Step 1 Compensate: None
+
+RESULT: Order fails, inventory restored, payment not captured.
+```
+
+#### **Scenario C: Capture Payment Fails (Step 5) with Retry**
+
+```
+Step 1: Validate Order     ✅ COMPLETED
+Step 2: Reserve Inventory  ✅ COMPLETED
+Step 3: Authorize Payment  ✅ COMPLETED
+Step 4: Create Shipment    ✅ COMPLETED
+Step 5: Capture Payment    ❌ FAILED (payment gateway timeout)
+
+RETRY STRATEGY:
+├── Attempt 1: Failed → Wait 1s
+├── Attempt 2: Failed → Wait 2s
+├── Attempt 3: Failed → Wait 4s
+└── All retries exhausted → Trigger Rollback
+
+ROLLBACK:
+├── Step 4 Compensate: Cancel Shipment ✅
+├── Step 3 Compensate: Void Authorization ✅
+├── Step 2 Compensate: Release Inventory ✅
+└── Step 1: None
+
+RESULT: Order fails, clean state restored.
+```
+
+#### **Scenario D: Compensation Fails → Dead Letter Queue**
+
+```
+Step 1: Validate Order     ✅
+Step 2: Reserve Inventory  ✅
+Step 3: Authorize Payment  ✅
+Step 4: Create Shipment    ❌ FAILED
+
+ROLLBACK ATTEMPT:
+├── Step 3 Compensate: Void Authorization ✅
+└── Step 2 Compensate: Release Inventory ❌ FAILED (inventory DB down)
+
+RETRY Compensation:
+├── Attempt 1: Failed → Wait 1s
+├── Attempt 2: Failed → Wait 2s
+├── Attempt 3: Failed → Wait 4s
+└── All retries exhausted → SEND TO DEAD LETTER QUEUE
+
+DLQ Record:
+{
+  "orderId": "ORD-123",
+  "failedStep": "releaseInventory",
+  "context": {"sku": "ABC-123", "quantity": 2},
+  "error": "Inventory DB connection timeout",
+  "status": "MANUAL_INTERVENTION_REQUIRED"
+}
+
+RESULT: Order partially compensated. Human operator fixes inventory manually.
+```
+
+---
+
+## Transaction Steps Detail
+
+### **Step 1: Validate Order**
+- **Action:** Check user exists, products valid, address valid, total calculation
+- **Compensation:** None (no side effects)
+- **Idempotent:** Yes (validation is read-only)
+
+### **Step 2: Reserve Inventory**
+- **Action:** Lock stock in inventory service (decrement available, increment reserved)
+- **Compensation:** Release reserved stock back to available
+- **Idempotency Key:** `orderId + sku` ensures same reservation not duplicated
+
+### **Step 3: Authorize Payment**
+- **Action:** Place hold on payment method (no actual charge)
+- **Compensation:** Void authorization (release hold)
+- **Idempotency Key:** `orderId` prevents duplicate authorizations
+
+### **Step 4: Create Shipment**
+- **Action:** Create shipment record with carrier, generate tracking placeholder
+- **Compensation:** Cancel shipment record
+- **Idempotency Key:** `orderId` ensures single shipment
+
+### **Step 5: Capture Payment**
+- **Action:** Actually charge the authorized amount
+- **Compensation:** Issue full refund
+- **Idempotency Key:** `authorizationId` prevents double capture
+
+### **Step 6: Update Order Status**
+- **Action:** Change order status to "CONFIRMED" or "COMPLETED"
+- **Compensation:** Revert to "FAILED" or "CANCELLED"
+- **Idempotency Key:** `orderId` + version
+
+### **Step 7: Send Confirmation**
+- **Action:** Email/SMS notification to user
+- **Compensation:** None (no financial impact)
+- **Idempotency Key:** `orderId` prevents duplicate emails
+
+---
+
+## Retry & Timeout Configuration
+
+| Step | Max Retries | Base Delay | Timeout | Notes |
+|------|-------------|------------|---------|-------|
+| Validate Order | 1 | N/A | 2s | Mostly local, fail fast |
+| Reserve Inventory | 3 | 1s | 5s | Network call to inventory |
+| Authorize Payment | 2 | 1s | 10s | External payment gateway |
+| Create Shipment | 3 | 2s | 8s | Carrier API, may be slow |
+| Capture Payment | 3 | 2s | 15s | Critical, must succeed eventually |
+| Update Order Status | 3 | 1s | 3s | DB update |
+| Send Confirmation | 2 | 1s | 5s | Async, can be eventual |
+
+---
+
+## State Machine Diagram
+
+```
+                    ┌─────────────────┐
+                    │   ORDER_CREATED │
+                    └────────┬────────┘
+                             │ Step 1: Validate
+                             ▼
+                    ┌─────────────────┐
+                    │   VALIDATED     │
+                    └────────┬────────┘
+                             │ Step 2: Reserve Inventory
+                             ▼
+                    ┌─────────────────┐
+                    │ INVENTORY_HELD  │
+                    └────────┬────────┘
+                             │ Step 3: Authorize Payment
+                             ▼
+                    ┌─────────────────┐
+                    │ PAYMENT_AUTH    │
+                    └────────┬────────┘
+                             │ Step 4: Create Shipment
+                             ▼
+                    ┌─────────────────┐
+                    │ SHIPMENT_CREATED│
+                    └────────┬────────┘
+                             │ Step 5: Capture Payment
+                             ▼
+                    ┌─────────────────┐
+                    │ PAYMENT_CAPTURED│
+                    └────────┬────────┘
+                             │ Step 6: Update Order
+                             ▼
+                    ┌─────────────────┐
+                    │ ORDER_COMPLETED │
+                    └─────────────────┘
+
+    On ANY step failure after retries:
+                    ┌─────────────────┐
+                    │   COMPENSATING  │ ← Execute reverse LIFO
+                    └────────┬────────┘
+                             │
+            ┌────────────────┼────────────────┐
+            ▼                ▼                ▼
+    ┌─────────────┐  ┌─────────────┐  ┌─────────────┐
+    │    FAILED   │  │  PARTIAL    │  │     DLQ     │
+    │  (clean)    │  │ ROLLBACK    │  │  (manual)   │
+    └─────────────┘  └─────────────┘  └─────────────┘
+```
+
+---
+
+## Database Tables for State Persistence
+
+### `saga_executions` Table
+```sql
+CREATE TABLE saga_executions (
+    id UUID PRIMARY KEY,
+    order_id VARCHAR(50) NOT NULL,
+    current_state VARCHAR(50) NOT NULL,
+    context JSONB NOT NULL,           -- stores all order data
+    completed_steps TEXT[] NOT NULL,  -- array of completed step names
+    failed_step VARCHAR(100),
+    retry_count INTEGER DEFAULT 0,
+    created_at TIMESTAMP,
+    updated_at TIMESTAMP
+);
+```
+
+### `dead_letter_queue` Table
+```sql
+CREATE TABLE dead_letter_queue (
+    id UUID PRIMARY KEY,
+    order_id VARCHAR(50) NOT NULL,
+    failed_step VARCHAR(100) NOT NULL,
+    context JSONB NOT NULL,
+    error_message TEXT,
+    retry_attempts INTEGER,
+    status VARCHAR(20) DEFAULT 'PENDING', -- PENDING, RESOLVED, RETRYING
+    created_at TIMESTAMP,
+    resolved_at TIMESTAMP
+);
+```
+
+---
+
+## Key Interview Points
+
+### What Interviewers Look For:
+1. **Understanding of Compensation** — Not traditional DB rollback, but business undo actions
+2. **LIFO Order** — Reverse order of execution for compensation
+3. **Idempotency** — Every operation must be safe to retry
+4. **Retry Strategy** — Exponential backoff, not fixed intervals
+5. **Dead Letter Queue** — Safety net when automated recovery fails
+6. **State Persistence** — Crash recovery capability
+7. **Failure Isolation** — One failed order shouldn't block others
+
+### Common Interview Questions:
+- **Q:** What if inventory release fails during rollback?
+  - **A:** Retry with backoff, then send to DLQ for manual resolution. Order remains in partial state.
+
+- **Q:** How do you handle duplicate order submissions?
+  - **A:** Idempotency key on the order endpoint; same key returns existing order.
+
+- **Q:** What if payment is captured but shipment fails?
+  - **A:** Compensation will refund payment. If refund fails → DLQ, operator manually refunds.
+
+- **Q:** How do you handle long-running transactions?
+  - **A:** Persist state, implement timeouts, and have monitoring alerts for stuck sagas.
+
+---
+
+## Quick Reference Card
+
+| Concept | Implementation |
+|---------|----------------|
+| **Saga Type** | Orchestration-based (central coordinator) |
+| **Step Definition** | `{ name, execute, compensate }` |
+| **Rollback Order** | LIFO (reverse of completed steps) |
+| **Retry Algorithm** | Exponential backoff: `delay = base * 2^(attempt-1)` |
+| **Idempotency** | Request ID / business key per operation |
+| **DLQ Trigger** | After max retries on compensation failure |
+| **State Storage** | PostgreSQL/NoSQL after each step |
+| **Monitoring** | Track saga duration, failure rates, DLQ size |
+
+---
+
+This approach ensures **data consistency**, **resilience**, and **observability** in a distributed e-commerce order placement system. The saga pattern with orchestration provides clear control over the transaction flow while maintaining the ability to recover from failures gracefully.
